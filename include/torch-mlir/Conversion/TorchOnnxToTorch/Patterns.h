@@ -63,7 +63,7 @@ struct OpBinder {
     return success();
   }
   
-  ParseResult tensorOperandsList( llvm::SmallVector<Value, 4> &values) {
+  ParseResult tensorOperandsList( llvm::SmallVectorImpl<Value> &values) {
     for (int i = 0; i < op->getNumOperands(); i++) {
       values.push_back(op->getOperand(i));
     }
