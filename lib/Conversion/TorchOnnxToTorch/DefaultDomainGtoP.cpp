@@ -99,6 +99,120 @@ void mlir::torch::onnx_c::populateDefaultDomainGtoP(
                       binder.op, resultType, lhs, rhs);
                   return success();
                 });
+  patterns.onOp("MaxPool", 12,
+		[](OpBinder binder, ConversionPatternRewriter &rewriter) {
+		  MLIRContext *context = binder.op->getContext();
+                  Value constantOne = rewriter.create<Torch::ConstantIntOp>(
+                    binder.getLoc(), rewriter.getI64IntegerAttr(1));
+                  Value constantZero = rewriter.create<Torch::ConstantIntOp>(
+                    binder.getLoc(), rewriter.getI64IntegerAttr(0));
+
+		  SmallString<64> name("torch.onnx.");
+                  name.append("kernel_shape");
+                  auto attr = binder.op->getAttr(name);
+
+                  if (!attr) {
+                    return failure();
+                  }
+
+                  auto kernelSizeAttr = dyn_cast<ArrayAttr>(attr);
+
+
+		  bool ceil_mode;
+		  binder.s64BoolAttr(ceil_mode, "ceil_mode", false);
+
+		  name = "torch.onnx.";
+                  name.append("strides");
+                  attr = binder.op->getAttr(name);
+
+		  SmallVector<Value, 1> strides;
+                  if (!attr) {
+                    for (int i = 0; i < kernelSizeAttr.size(); i++) {
+                      strides.push_back(constantOne);
+		    }
+                  } else {
+                    auto stridesAttr = dyn_cast<ArrayAttr>(attr);
+                    for (int i = 0; i < stridesAttr.size(); i++) {
+                      auto stridesI = llvm::cast<IntegerAttr>(stridesAttr[i]).getInt();
+                      strides.push_back(rewriter.create<Torch::ConstantIntOp>(
+                        binder.getLoc(), rewriter.getI64IntegerAttr(stridesI)));
+                    }
+		  }
+		  Value stridesList = rewriter.create< Torch::PrimListConstructOp>(
+                    binder.getLoc(), Torch::ListType::get(Torch::IntType::get(context)), strides);
+
+		  SmallVector<Value, 1> kernelSize;
+		  for (int i = 0; i < kernelSizeAttr.size(); i++) {
+	            auto kernelSizeI = llvm::cast<IntegerAttr>(kernelSizeAttr[i]).getInt();
+                    kernelSize.push_back(rewriter.create<Torch::ConstantIntOp>(
+                      binder.getLoc(), rewriter.getI64IntegerAttr(kernelSizeI)));
+		  }
+		  Value kernelSizeList = rewriter.create< Torch::PrimListConstructOp>(
+                    binder.getLoc(), Torch::ListType::get(Torch::IntType::get(context)), kernelSize);
+
+		  name = "torch.onnx.";
+                  name.append("pads");
+                  attr = binder.op->getAttr(name);
+
+                  SmallVector<Value, 1> pads;
+                  if (!attr) {
+                    for (int i = 0; i < kernelSizeAttr.size(); i++) {
+                      pads.push_back(constantZero);
+                    }
+                  } else {
+	            auto padsAttr = dyn_cast<ArrayAttr>(attr);
+		    for (int i = 0; i < padsAttr.size(); i++) {
+                      auto padI = llvm::cast<IntegerAttr>(padsAttr[i]).getInt();
+                      pads.push_back(rewriter.create<Torch::ConstantIntOp>(
+                        binder.getLoc(), rewriter.getI64IntegerAttr(padI)));
+                    }
+		  }
+	          Value paddingList = rewriter.create< Torch::PrimListConstructOp>(
+                    binder.getLoc(), Torch::ListType::get(Torch::IntType::get(context)), pads);
+
+		  name = "torch.onnx.";
+                  name.append("dilations");
+                  attr = binder.op->getAttr(name);
+
+		  SmallVector<Value, 1> dilation;
+		  if (!attr) {
+                    for (int i = 0; i < kernelSizeAttr.size(); i++) {
+                      dilation.push_back(constantOne);
+                    }
+                  } else {
+                    auto dilationAttr = dyn_cast<ArrayAttr>(attr);
+                    for (int i = 0; i < dilationAttr.size(); i++) {
+                      auto dilationI = llvm::cast<IntegerAttr>(dilationAttr[i]).getInt();
+                      dilation.push_back(rewriter.create<Torch::ConstantIntOp>(
+                        binder.getLoc(), rewriter.getI64IntegerAttr(dilationI)));
+                    }
+                  }
+                  Value dilationList = rewriter.create< Torch::PrimListConstructOp>(
+                    binder.getLoc(), Torch::ListType::get(Torch::IntType::get(context)), dilation);
+
+		  Value ceil_mode_ = rewriter.create<Torch::ConstantBoolOp>(binder.getLoc(), ceil_mode);
+
+		  Torch::ValueTensorType resultType;
+                  Value operand;
+                  if (binder.tensorOperand(operand) ||
+                      binder.tensorResultType(resultType)) {
+                    return failure();
+                  }
+
+                  if ( kernelSizeAttr.size() == 2) {
+                    rewriter.replaceOpWithNewOp<Torch::AtenMaxPool2dOp>(
+                      binder.op, resultType, operand, kernelSizeList, stridesList,
+                      paddingList, dilationList, ceil_mode_);
+                    return success();
+                  }
+		  else if (kernelSizeAttr.size() == 3) {
+                    rewriter.replaceOpWithNewOp<Torch::AtenMaxPool3dOp>(
+                      binder.op, resultType, operand, kernelSizeList, stridesList,
+                      paddingList, dilationList, ceil_mode_);
+		    return success();
+                  }
+		  return failure();
+  	        });
   patterns.onOp("Greater", 16,
                 [](OpBinder binder, ConversionPatternRewriter &rewriter) {
                   Torch::ValueTensorType resultType;
