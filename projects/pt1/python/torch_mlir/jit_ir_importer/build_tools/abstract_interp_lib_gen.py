@@ -1148,6 +1148,9 @@ def aten〇group_norm〡shape(input: List[int], num_groups: int, weight: Optiona
 def aten〇native_group_norm〡shape(input: List[int], weight: Optional[List[int]], bias: Optional[List[int]], N: int, C: int, HxW: int, group: int, eps: float) -> Tuple[List[int], List[int], List[int]]:
     return upstream_shape_functions.unary(input), [N, group], [N, group]
 
+def quantized〇instance_norm〡shape(input: List[int], weight: Optional[List[int]], bias: Optional[List[int]], eps: float, output_scale: float, output_zero_point: int) -> List[int]:
+    return upstream_shape_functions.unary(input)
+
 def aten〇slice〇Tensor〡shape(self: List[int], dim: int = 0, start: Optional[int] = None, end: Optional[int] = None, step: int = 1) -> List[int]:
     return upstream_shape_functions.slice(self, dim, start, end, step)
 
@@ -1707,6 +1710,11 @@ def aten〇native_group_norm〡dtype(input_rank_dtype: Tuple[int, int], weight_r
     input_rank, input_dtype = input_rank_dtype
     assert not is_integer_dtype(input_dtype)
     return input_dtype, input_dtype, input_dtype
+
+# device is not supported hence unable to check the dtype function
+def quantized〇instance_norm〡dtype(input_rank_dtype: Tuple[int, int], weight_rank_dtype: Optional[Tuple[int, int]], bias_rank_dtype: Optional[Tuple[int, int]], eps: float, output_scale: float, output_zero_point: int) -> int:
+    input_rank, input_dtype = input_rank_dtype
+    return input_dtype
 
 @check_dtype_function(_check_tensors_with_the_same_dtype(num_of_tensors=1))
 def aten〇bernoulli_〇float〡dtype(self_rank_dtype: Tuple[int, int], p: float = 0.5, generator: Any = None) -> int:

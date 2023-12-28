@@ -1679,6 +1679,192 @@ public:
 } // namespace
 
 namespace {
+class ConvertQuantizedInstanceNormOp : public OpConversionPattern<QuantizedInstanceNormOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(QuantizedInstanceNormOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    MLIRContext *context = op->getContext();
+    Location loc = op->getLoc();
+    Value input = adaptor.getInput();
+    Value scale = adaptor.getWeight();
+    Value bias = adaptor.getBias();
+    Value eps = adaptor.getEps();
+
+    auto inputType = input.getType().cast<RankedTensorType>();
+    auto inputRank = inputType.getRank();
+
+    SmallVector<AffineExpr, 2> ncExpr;
+    ncExpr.push_back(mlir::getAffineDimExpr(0, context));
+    ncExpr.push_back(mlir::getAffineDimExpr(1, context));
+
+    auto ncIndexingMap = AffineMap::get(
+        /*dimCount=*/inputRank,
+        /*symbolCount=*/0, ncExpr, context);
+
+    SmallVector<AffineExpr, 1> cExpr;
+    cExpr.push_back(mlir::getAffineDimExpr(1, context));
+
+    auto cIndexingMap = AffineMap::get(
+        /*dimCount=*/inputRank,
+        /*symbolCount=*/0, cExpr, context);
+
+    SmallVector<AffineMap, 2> indexingMaps = {
+      rewriter.getMultiDimIdentityMap(inputRank), // input
+      ncIndexingMap, // output
+    };
+
+    Type resultElementType = inputType.getElementType();
+    auto inputSize = getTensorSizes(rewriter, loc, input);
+    SmallVector<Value> ncSize({inputSize[0], inputSize[1]});
+
+    Value meanTensor =
+        createZeroInitTensor(rewriter, loc, ncSize, resultElementType);
+    Value varTensor =
+        createZeroInitTensor(rewriter, loc, ncSize, resultElementType);
+
+    SmallVector<utils::IteratorType> iteratorTypes(inputRank, utils::IteratorType::parallel);
+
+    Value sumPool2d =
+        rewriter
+            .create<linalg::GenericOp>(
+                loc, meanTensor.getType(),
+                ValueRange{input}, meanTensor,
+                /*indexingMaps=*/indexingMaps,
+                /*iteratorTypes=*/iteratorTypes,
+                [&](OpBuilder &b, Location loc, ValueRange args) {
+                  Value input = args[0], sum = args[1];
+		  Value result = b.create<arith::AddFOp>(loc, input, sum);
+                  b.create<linalg::YieldOp>(loc, result);
+                })
+            .getResult(0);
+    
+    indexingMaps = {
+      rewriter.getMultiDimIdentityMap(2), // sumPool2d
+      rewriter.getMultiDimIdentityMap(2), // output
+    };    
+
+    iteratorTypes = {utils::IteratorType::parallel, utils::IteratorType::parallel};
+    Value mean =
+      rewriter
+          .create<linalg::GenericOp>(
+	      loc, meanTensor.getType(),
+	      ValueRange{sumPool2d}, meanTensor,
+	      indexingMaps,
+	      iteratorTypes,
+	      [&](OpBuilder &b, Location loc, ValueRange args) {
+                  Value input = args[0];
+                  Value hw = 
+		    b.create<arith::ConstantOp>(loc, 
+		      FloatAttr::get(resultElementType, inputType.getShape()[2] *
+			                          inputType.getShape()[3]));
+		  Value result = b.create<arith::DivFOp>(loc, input, hw);
+                  b.create<linalg::YieldOp>(loc, result);
+                })
+          .getResult(0);
+    
+    indexingMaps = {
+      rewriter.getMultiDimIdentityMap(inputRank), // input
+      ncIndexingMap, // mean
+      ncIndexingMap, // output
+    };
+
+    iteratorTypes = {utils::IteratorType::parallel,
+	             utils::IteratorType::parallel,
+                     utils::IteratorType::parallel,
+                     utils::IteratorType::parallel,};
+    // (input - mean) ^ 2
+    Value varianceNumerator =
+      rewriter
+          .create<linalg::GenericOp>(
+              loc, varTensor.getType(),
+              ValueRange{input, mean}, varTensor,
+              indexingMaps,
+              iteratorTypes,
+              [&](OpBuilder &b, Location loc, ValueRange args) {
+                  Value input = args[0], mean = args[1], output = args[2];
+                  Value two =
+                    b.create<arith::ConstantOp>(loc,
+                      FloatAttr::get(resultElementType, 2));
+                  Value inputSubMean = b.create<arith::SubFOp>(loc, input, mean);
+		  Value squared = b.create<math::PowFOp>(loc, inputSubMean, two);
+		  Value sum = b.create<arith::AddFOp>(loc, squared, output);
+                  b.create<linalg::YieldOp>(loc, sum);
+                })
+          .getResult(0);
+
+    indexingMaps = {
+      ncIndexingMap, // numerator
+      ncIndexingMap, // output
+    };
+
+    iteratorTypes = {utils::IteratorType::parallel,
+                     utils::IteratorType::parallel,};
+
+    Value variance =
+      rewriter
+          .create<linalg::GenericOp>(
+              loc, varTensor.getType(),
+              ValueRange{varianceNumerator}, varTensor,
+              indexingMaps,
+              iteratorTypes,
+              [&](OpBuilder &b, Location loc, ValueRange args) {
+                  Value numerator = args[0];
+                  Value hw =
+                    b.create<arith::ConstantOp>(loc,
+                      FloatAttr::get(resultElementType, inputType.getShape()[2] *
+                                                        inputType.getShape()[3]));
+                  Value sum = b.create<arith::DivFOp>(loc, numerator, hw);
+                  b.create<linalg::YieldOp>(loc, sum);
+                })
+          .getResult(0);
+
+    iteratorTypes = {utils::IteratorType::parallel,
+                     utils::IteratorType::parallel,
+                     utils::IteratorType::parallel,
+                     utils::IteratorType::parallel,};
+    indexingMaps = {
+      rewriter.getMultiDimIdentityMap(inputRank), // input
+      ncIndexingMap, // mean
+      ncIndexingMap, // variance
+      cIndexingMap, // scale
+      cIndexingMap, // bias
+      rewriter.getMultiDimIdentityMap(inputRank), // output
+    };
+    
+    Value outTensor =
+        createZeroInitTensor(rewriter, loc, inputSize, resultElementType);
+
+    Value instNorm =
+      rewriter
+          .create<linalg::GenericOp>(
+              loc, outTensor.getType(),
+              ValueRange{input, mean, variance, scale, bias}, outTensor,
+              indexingMaps,
+              iteratorTypes,
+              [&](OpBuilder &b, Location loc, ValueRange args) {
+                Value input = args[0], mean = args[1], var = args[2],
+		  scale = args[3], bias = args[4];
+   	        Value inputSubMean = b.create<arith::SubFOp>(loc, input, mean);
+                Value varPlusEps = b.create<arith::AddFOp>(loc, var, eps);
+	        Value rSTD = b.create<math::RsqrtOp>(loc, varPlusEps);
+                Value temp = b.create<arith::MulFOp>(loc, inputSubMean, rSTD);
+                Value timesScale = b.create<arith::MulFOp>(loc, temp, scale);
+                Value plusBias =  b.create<arith::AddFOp>(loc, timesScale, bias);
+                b.create<linalg::YieldOp>(loc, plusBias);
+	      })
+          .getResult(0);
+    Type newResultType = getTypeConverter()->convertType(op.getType());
+    rewriter.replaceOpWithNewOp<tensor::CastOp>(op, newResultType, instNorm);
+
+    return success();
+
+  }
+};
+} // namespace
+
+namespace {
 class ConvertAtenNllLossBackwardOp
     : public OpConversionPattern<AtenNllLossBackwardOp> {
 public:
@@ -2002,6 +2188,8 @@ void mlir::torch::torch_to_linalg::populateUncategorizedPatternsAndLegality(
   patterns.add<ConvertAtenNllLossForwardOp>(typeConverter, context);
   target.addIllegalOp<AtenBatchNormOp>();
   patterns.add<ConvertAtenBatchNormOp>(typeConverter, context);
+  target.addIllegalOp<QuantizedInstanceNormOp>();
+  patterns.add<ConvertQuantizedInstanceNormOp>(typeConverter, context);
   target.addIllegalOp<PrimsCollapseOp>();
   patterns.add<ConvertPrimsCollapseOp>(typeConverter, context);
   target.addIllegalOp<PrimsSplitDimOp>();
