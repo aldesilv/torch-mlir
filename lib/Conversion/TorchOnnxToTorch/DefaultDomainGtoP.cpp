@@ -172,6 +172,37 @@ void mlir::torch::onnx_c::populateDefaultDomainGtoP(
                       binder.op, resultType, lhs, rhs);
                   return success();
                 });
+  /*
+  patterns.onOp("InstanceNormalization", 6,
+		 [](OpBinder binder, ConversionPatternRewriter &rewriter) {
+		   Torch::ValueTensorType resultType;
+                   llvm::SmallVector<Value> operands;
+		   if (binder.tensorOperands(operands, 3) ||
+                       binder.tensorResultType(resultType) ||
+                       operands.size() != 3) {
+                     return failure();
+                   }
+
+		   SmallString<64> name("torch.onnx.");
+		   name.append("epsilon");
+
+		   auto attr = binder.op->getAttr(name);
+		   float eps;
+		   if (attr) {
+		     auto epsAttr = dyn_cast<FloatAttr>(attr);
+                     eps = epsAttr.getValue().convertToFloat();
+		   } else {
+                     eps = 1e-05;
+		   }
+		   auto epsValue = rewriter.create<Torch::ConstantFloatOp>(binder.getLoc(),
+				                                    rewriter.getF64FloatAttr(eps));
+                   
+	           rewriter.replaceOpWithNewOp<Torch::AtenInstanceNormOp>(
+                     binder.op, resultType, operands[0], operands[1], operands[2],
+		     epsValue);
+		   return success();
+		 });
+*/
   patterns.onOp("Max", 1,
 		[](OpBinder binder, ConversionPatternRewriter &rewriter) {
 		  Torch::ValueTensorType resultType;
