@@ -1148,6 +1148,9 @@ def aten〇group_norm〡shape(input: List[int], num_groups: int, weight: Optiona
 def aten〇native_group_norm〡shape(input: List[int], weight: Optional[List[int]], bias: Optional[List[int]], N: int, C: int, HxW: int, group: int, eps: float) -> Tuple[List[int], List[int], List[int]]:
     return upstream_shape_functions.unary(input), [N, group], [N, group]
 
+def aten〇instance_norm〡shape(input: List[int], weight: Optional[List[int]], bias: Optional[List[int]], running_mean: Optional[List[int]], running_var: Optional[List[int]], use_input_stats: bool, momentum: float, eps: float, cudnn_enabled: bool) -> List[int]:
+    return upstream_shape_functions.unary(input)
+
 def quantized〇instance_norm〡shape(input: List[int], weight: Optional[List[int]], bias: Optional[List[int]], eps: float, output_scale: float, output_zero_point: int) -> List[int]:
     return upstream_shape_functions.unary(input)
 
@@ -1710,6 +1713,12 @@ def aten〇native_group_norm〡dtype(input_rank_dtype: Tuple[int, int], weight_r
     input_rank, input_dtype = input_rank_dtype
     assert not is_integer_dtype(input_dtype)
     return input_dtype, input_dtype, input_dtype
+
+@check_dtype_function(_check_tensors_with_the_same_dtype(tensor_shapes=[(1, 2, 1, 3), (2,), (2,), (2,), (2,)], error_types={*all_integer_dtypes()}, use_input_stats=False, momentum=0.1, eps=1e-5, cudnn_enabled=True))
+def aten〇instance_norm〡dtype(input_rank_dtype: Tuple[int, int], weight_rank_dtype: Optional[Tuple[int, int]], bias_rank_dtype: Optional[Tuple[int, int]], running_mean_rank_dtype: Optional[Tuple[int, int]], running_var_rank_dtype: Optional[Tuple[int, int]], use_input_stats: bool, momentum: float, eps: float, cudnn_enabled: bool) -> int:
+    input_rank, input_dtype = input_rank_dtype
+    assert not is_integer_dtype(input_dtype)
+    return input_dtype
 
 # device is not supported hence unable to check the dtype function
 def quantized〇instance_norm〡dtype(input_rank_dtype: Tuple[int, int], weight_rank_dtype: Optional[Tuple[int, int]], bias_rank_dtype: Optional[Tuple[int, int]], eps: float, output_scale: float, output_zero_point: int) -> int:

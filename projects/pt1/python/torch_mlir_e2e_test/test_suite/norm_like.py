@@ -489,3 +489,25 @@ class LayerNormNormalizeOverAllDimsModule(torch.nn.Module):
 def LayerNormNormalizeOverAllDimsModule_basic(module, tu: TestUtils):
     module.forward(tu.rand(2, 2, 3))
 
+class InstanceNormalization2dModule(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.instanceNorm = torch.nn.InstanceNorm2d(2)
+        self.instanceNorm.eval()
+        self.instanceNorm.running_mean = torch.tensor([0.5, 0.4])
+        self.instanceNorm.running_var = torch.tensor([3.0, 2.0])
+        self.instanceNorm.weight = torch.nn.Parameter(
+            torch.tensor([3.0, 2.0]))
+        self.instanceNorm.bias = torch.nn.Parameter(
+            torch.tensor([0.5, 0.4]))
+    @export
+    @annotate_args([
+        None,
+        ([1, 2, 1, 3], torch.float32, True),
+    ])
+    def forward(self, x):
+        return self.instanceNorm(x)
+
+@register_test_case(module_factory=lambda: InstanceNormalization2dModule())
+def InstanceNormalization2dModule_basic(module, tu: TestUtils):
+    module.forward(tu.rand(1, 2, 1, 3))
