@@ -125,6 +125,123 @@ void mlir::torch::onnx_c::populateDefaultDomainQtoZ(
                       binder.op, resultType, operand);
                   return success();
                 });
+  patterns.onOp("RoiAlign", 16,
+		[](OpBinder binder, ConversionPatternRewriter &rewriter) {
+		  Torch::ValueTensorType resultType;
+		  llvm::SmallVector<Value> operands;
+		  std::string mode, coordinate_transformation_mode;
+		  int64_t output_height, output_width, sampling_ratio;
+                  float spatial_scale;
+
+		  if (binder.tensorOperandsList(operands) ||
+		      binder.tensorResultType(resultType) ||
+		      binder.s64IntegerAttr(output_height, "output_height", 1) ||
+		      binder.s64IntegerAttr(output_width, "output_width", 1) ||
+		      binder.s64IntegerAttr(sampling_ratio, "sampling_ratio", 1) ||
+		      binder.f32FloatAttr(spatial_scale, "spatial_scale", 1.0f) ||
+		      binder.customOpNameStringAttr(mode, "mode", "avg") ||
+		      binder.customOpNameStringAttr(coordinate_transformation_mode, "coordinate_transformation_mode", "half_pixel")
+		     )
+		    return failure();
+
+		  Value x = operands[0];
+		  Value rois = operands[1];
+		  Value batch_indices = operands[2];
+
+		  auto sizes = dyn_cast<Torch::ValueTensorType>(x.getType()).getSizes();
+		  auto height = sizes[2];
+                  auto width = sizes[3];
+
+                  Location loc = binder.getLoc();
+
+		  Value offset;
+		  if (coordinate_transformation_mode == "half_pixel") {
+		    offset = rewriter.create<Torch::ConstantFloatOp>(
+				    binder.getLoc(), rewriter.getType<Torch::FloatType>(),
+				    rewriter.getFloatAttr(rewriter.getF64Type(), 0.5));
+		  } else {
+		    offset = rewriter.create<Torch::ConstantFloatOp>(
+				    binder.getLoc(), rewriter.getType<Torch::FloatType>(),
+				    rewriter.getFloatAttr(rewriter.getF64Type(), 0.0));
+		  }
+		  Value spatialScaleValue = rewriter.create<Torch::ConstantFloatOp>(
+				  binder.getLoc(), rewriter.getType<Torch::FloatType>(),
+				  rewriter.getFloatAttr(rewriter.getF64Type(), spatial_scale));
+		  Value none = rewriter.create<Torch::ConstantNoneOp>(loc);
+                  Value zero = rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), 0));
+		  Value one = rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), 1));
+		  Value two = rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), 2));
+		  Value three = rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), 3));
+		  Value four = rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), 4));
+		  Value slice = rewriter.create<Torch::AtenSliceTensorOp>(
+				                loc, resultType, rois, /*dim=*/zero, /*start=*/none, /*end=*/none, /*step=*/one);
+                  Value select = rewriter.create<Torch::AtenSelectIntOp>(loc, resultType, slice, one, one);
+		  Value mul = rewriter.create<Torch::AtenMulScalarOp>(loc, resultType, select, spatialScaleValue);
+		  Value roiStartW = rewriter.create<Torch::AtenSubScalarOp>(loc, resultType, mul, offset, one);
+		  slice = rewriter.create<Torch::AtenSliceTensorOp>(
+				  loc, resultType, rois, /*dim=*/zero, /*start=*/none, /*end=*/none, /*step=*/one);
+	          select = rewriter.create<Torch::AtenSelectIntOp>(loc, resultType, slice, one, two);
+		  mul = rewriter.create<Torch::AtenMulScalarOp>(loc, resultType, select, spatialScaleValue);
+		  Value roiStartH = rewriter.create<Torch::AtenSubScalarOp>(loc, resultType, mul, offset, one);
+		  slice = rewriter.create<Torch::AtenSliceTensorOp>(
+				  loc, resultType, rois, /*dim=*/zero, /*start=*/none, /*end=*/none, /*step=*/one);
+		  select = rewriter.create<Torch::AtenSelectIntOp>(loc, resultType, slice, one, three);
+		  mul = rewriter.create<Torch::AtenMulScalarOp>(loc, resultType, select, spatialScaleValue);
+		  Value roiEndW = rewriter.create<Torch::AtenSubScalarOp>(loc, resultType, mul, offset, one);
+                  slice = rewriter.create<Torch::AtenSliceTensorOp>(
+				  loc, resultType, rois, /*dim=*/zero, /*start=*/none, /*end=*/none, /*step=*/one);
+		  select = rewriter.create<Torch::AtenSelectIntOp>(loc, resultType, slice, one, four);
+		  mul = rewriter.create<Torch::AtenMulScalarOp>(loc, resultType, select, spatialScaleValue);
+		  Value roiEndH = rewriter.create<Torch::AtenSubScalarOp>(loc, resultType, mul, offset, one);
+		  Value roiWidth = rewriter.create<Torch::AtenSubTensorOp>(loc, resultType, roiEndW, roiStartW, one);
+                  Value roiHeight = rewriter.create<Torch::AtenSubTensorOp>(loc, resultType, roiEndH, roiStartH, one);
+                  if (coordinate_transformation_mode != "half_pixel") {
+                    roiWidth = rewriter.create<Torch::AtenClampOp>(loc, resultType, roiWidth, one, none);
+		    roiHeight=rewriter.create<Torch::AtenClampOp>(loc, resultType, roiHeight, one, none);
+		  }
+		  Value outputHeightValue = rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), output_height));
+                  Value outputWidthValue = rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), output_width));
+		  Value binSizeH = rewriter.create<Torch::AtenDivScalarOp>(loc, resultType, roiHeight, outputHeightValue);
+		  Value binSizeW = rewriter.create<Torch::AtenDivScalarOp>(loc, resultType, roiWidth, outputWidthValue);
+		  Value roiBinGridH, roiBinGridW;
+		  if (sampling_ratio > 0) {
+                    roiBinGridH = rewriter.create<Torch::ConstantIntOp>(
+				    binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				    rewriter.getIntegerAttr(rewriter.getIntegerType(64), sampling_ratio));
+		    roiBinGridW =rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), sampling_ratio));
+		  } else {
+                    roiBinGridH = rewriter.create<Torch::AtenDivScalarOp>(loc, resultType, roiHeight, outputHeightValue);
+		    roiBinGridH = rewriter.create<Torch::AtenCeilOp>(loc, resultType, roiBinGridH);
+		    roiBinGridW=rewriter.create<Torch::AtenDivScalarOp>(loc,resultType,roiWidth,outputWidthValue);
+		    roiBinGridW=rewriter.create<Torch::AtenCeilOp>(loc, resultType, roiBinGridW);
+		  }
+		  Value heightValue = rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), height));
+		  Value widthValue = rewriter.create<Torch::ConstantIntOp>(
+				  binder.getLoc(), rewriter.getType<Torch::IntType>(),
+				  rewriter.getIntegerAttr(rewriter.getIntegerType(64), width));
+		  if (sampling_ratio > 0) {
+                    
+		  }
+		  return success();
+		});
   patterns.onOp(
       "ScatterElements", 18,
       [](OpBinder binder, ConversionPatternRewriter &rewriter) {

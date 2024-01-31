@@ -5,6 +5,8 @@
 
 import torch
 
+from torchvision.ops import roi_align
+
 from torch_mlir_e2e_test.framework import TestUtils
 from torch_mlir_e2e_test.registry import register_test_case
 from torch_mlir_e2e_test.annotations import annotate_args, export
@@ -489,3 +491,19 @@ class LayerNormNormalizeOverAllDimsModule(torch.nn.Module):
 def LayerNormNormalizeOverAllDimsModule_basic(module, tu: TestUtils):
     module.forward(tu.rand(2, 2, 3))
 
+class RoIAlignModule(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    @export
+    @annotate_args([
+        None,
+        ([1, 1, 6, 6], torch.float32, True),
+        ([1, 5], torch.float32, True)
+    ])
+    def forward(self, x, boxes):
+        return roi_align(input=x, boxes=boxes, output_size=2)
+
+@register_test_case(module_factory=lambda: RoIAlignModule())
+def RoIAlignModule_basic(module, tu: TestUtils):
+    module.forward(tu.rand(1, 1, 6, 6), torch.tensor([[0.0, 0.0, 2.0, 2.0, 4.0]]))

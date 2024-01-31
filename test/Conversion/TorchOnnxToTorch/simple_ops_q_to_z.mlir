@@ -1333,3 +1333,9 @@ func.func @test_reshape_zero_and_negative_dim(%arg0: !torch.vtensor<[2,3,4],f32>
     %0:2 = torch.operator "onnx.TopK"(%arg0, %arg1) {torch.onnx.axis = -1 : si64} : (!torch.vtensor<[3,4],f32>, !torch.vtensor<[1],si64>) -> (!torch.vtensor<[3,3],f32>, !torch.vtensor<[3,3],si64>)
     return %0#0, %0#1 : !torch.vtensor<[3,3],f32>, !torch.vtensor<[3,3],si64>
   }
+
+// CHECK-LABEL: func.func @test_roialign_aligned_true
+  func.func @test_roialign_aligned_true(%arg0: !torch.vtensor<[1,1,10,10],f32>, %arg1: !torch.vtensor<[3,4],f32>, %arg2: !torch.vtensor<[3],si64>) -> !torch.vtensor<[3,1,5,5],f32> attributes {torch.onnx_meta.ir_version = 8 : si64, torch.onnx_meta.opset_version = 16 : si64, torch.onnx_meta.producer_name = "backend-test", torch.onnx_meta.producer_version = ""} {
+    %0 = torch.operator "onnx.RoiAlign"(%arg0, %arg1, %arg2) {torch.onnx.coordinate_transformation_mode = "half_pixel", torch.onnx.output_height = 5 : si64, torch.onnx.output_width = 5 : si64, torch.onnx.sampling_ratio = 2 : si64, torch.onnx.spatial_scale = 1.000000e+00 : f32} : (!torch.vtensor<[1,1,10,10],f32>, !torch.vtensor<[3,4],f32>, !torch.vtensor<[3],si64>) -> !torch.vtensor<[3,1,5,5],f32>
+    return %0 : !torch.vtensor<[3,1,5,5],f32>
+  }
